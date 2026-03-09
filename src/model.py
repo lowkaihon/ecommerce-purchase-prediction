@@ -11,7 +11,7 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -50,16 +50,17 @@ def build_pipeline(model, scale_features, X_columns):
 
 def tune_model(pipeline, search_config, X_train, y_train):
     params = search_config["params"]
+    cv = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_STATE)
     if search_config["search"] == "grid":
         search = GridSearchCV(
-            pipeline, params, cv=CV_FOLDS, scoring=SCORING, n_jobs=-1
+            pipeline, params, cv=cv, scoring=SCORING, n_jobs=-1
         )
     else:
         search = RandomizedSearchCV(
             pipeline,
             params,
             n_iter=search_config["n_iter"],
-            cv=CV_FOLDS,
+            cv=cv,
             scoring=SCORING,
             n_jobs=-1,
             random_state=RANDOM_STATE,

@@ -57,32 +57,32 @@ To add or remove a model, edit the `MODELS` dictionary. Each entry specifies:
 ## Pipeline Flow
 
 ```
-┌─────────────────┐
+┌──────────────────┐
 │  1. Data Load    │  load_data() — SQLite → DataFrame (12,330 rows)
-└────────┬────────┘
+└────────┬─────────┘
          ▼
-┌─────────────────┐
+┌──────────────────┐
 │  2. Cleaning     │  clean_data() — fix typos, negatives, drop nulls/duplicates
-└────────┬────────┘
+└────────┬─────────┘
          ▼
-┌─────────────────┐
+┌──────────────────┐
 │  3. Feature Eng  │  feature_engineer() — log transforms, binary indicator
-└────────┬────────┘
+└────────┬─────────┘
          ▼
-┌─────────────────┐
+┌──────────────────┐
 │  4. Prepare Data │  prepare_data() — one-hot encode categoricals, train/test split
-└────────┬────────┘
+└────────┬─────────┘
          ▼
-┌─────────────────┐
+┌──────────────────┐
 │  5. For each     │  For each model in config:
 │     model:       │    a. Build sklearn Pipeline (StandardScaler + model)
 │                  │    b. Hyperparameter tuning via GridSearchCV / RandomizedSearchCV
 │                  │    c. Evaluate best estimator on held-out test set
-└────────┬────────┘
+└────────┬─────────┘
          ▼
-┌─────────────────┐
+┌──────────────────┐
 │  6. Compare      │  Print comparison table sorted by F1, identify best model
-└─────────────────┘
+└──────────────────┘
 ```
 
 **Step details:**
@@ -171,31 +171,43 @@ All tuning uses **5-fold stratified cross-validation** with **F1 as the scoring 
 
 The pipeline prints a comparison table sorted by F1, along with per-model classification reports and confusion matrices.
 
+**Results (sorted by F1):**
+
+| Model | Accuracy | Precision | Recall | F1 | AUC-ROC | CV F1 |
+|-------|----------|-----------|--------|-----|---------|-------|
+| **LightGBM** | 0.8687 | 0.5652 | 0.8289 | **0.6721** | **0.9130** | 0.6677 |
+| Random Forest | 0.8834 | 0.6207 | 0.7248 | 0.6687 | 0.9003 | 0.6730 |
+| Logistic Regression | 0.8742 | 0.5857 | 0.7685 | 0.6647 | 0.8706 | 0.6714 |
+
+LightGBM achieves the highest F1 (0.6721) and AUC-ROC (0.9130), indicating the best discriminative ability across all thresholds. Random Forest has the highest precision (0.6207), while LightGBM leads in recall (0.8289). All three models show minimal CV-to-test gap, suggesting no overfitting.
+
 ### Key Factors Influencing Purchase Decisions
 
-Feature importance was extracted from the best-performing models to identify the key drivers of purchase completion. The top factors are consistent across Logistic Regression (absolute coefficients) and LightGBM (split-based importance):
+Feature importance was extracted from the best-performing models to identify the key drivers of purchase completion. The top factors are consistent across LightGBM (split-based importance) and Random Forest (Gini importance):
 
-| Rank | Feature | LR Importance | LightGBM Importance | Interpretation |
-|------|---------|---------------|---------------------|----------------|
-| 1 | **PageValue / has_page_value** | 1.27 (has_page_value) | 91 (PageValue) | Strongest predictor. Sessions where users interact with product pricing or add items to cart are far more likely to convert. |
-| 2 | **ExitRate** | 0.24 | 97 | High exit rates indicate users leaving the site — a strong negative signal for conversion. |
-| 3 | **BounceRate** | — | 78 | Closely related to ExitRate. Single-page sessions without interaction rarely lead to purchases. |
-| 4 | **ProductPageTime** | — | 81 (log: 70) | Longer engagement with product pages correlates with purchase intent. |
-| 5 | **SpecialDayProximity** | 0.96 | 56 | Proximity to special days (e.g., holidays) influences purchasing behavior. |
-| 6 | **CustomerType** | 0.47 (Returning) | 32 (Returning) | Returning visitors have different conversion patterns than new visitors. |
-| 7 | **TrafficSource** | 0.83 (Source 8) | 39 (Source 2) | Certain traffic channels drive higher-intent visitors. |
+| Rank | Feature | LightGBM Importance | RF Importance | Interpretation |
+|------|---------|---------------------|---------------|----------------|
+| 1 | **PageValue / has_page_value** | 104 (PageValue) | 0.21 (PageValue_log), 0.15 (has_page_value) | Strongest predictor. Sessions where users interact with product pricing or add items to cart are far more likely to convert. |
+| 2 | **ExitRate** | 112 | 0.092 | High exit rates indicate users leaving the site — a strong negative signal for conversion. |
+| 3 | **ProductPageTime** | 78 (log: 72) | 0.089 (log: 0.091) | Longer engagement with product pages correlates with purchase intent. |
+| 4 | **BounceRate** | 75 | 0.057 | Single-page sessions without interaction rarely lead to purchases. |
+| 5 | **SpecialDayProximity** | 53 | 0.010 | Proximity to special days (e.g., holidays) influences purchasing behavior. |
+| 6 | **CustomerType** | 25 (Returning) | 0.010 (Returning) | Returning visitors have different conversion patterns than new visitors. |
+| 7 | **TrafficSource** | 33 (Source 2) | 0.014 (Source 2) | Certain traffic channels drive higher-intent visitors. |
+
+*Note: Logistic Regression's optimal regularization (C=0.001, pure L1/Lasso) selected only PageValue_log as a non-zero coefficient, confirming PageValue's dominance but providing limited feature-level granularity.*
 
 ### Actionable Insights to Improve Conversion Rates
 
 1. **Optimize the path to product value** — PageValue is the dominant predictor across all models. Streamline the journey from landing page to product pages and simplify the add-to-cart experience. Users who engage with pricing are strongly likely to purchase.
 
-2. **Reduce exit and bounce rates** — ExitRate and BounceRate are the top features in LightGBM. Audit pages with the highest exit rates (likely checkout flow or poorly designed product pages) and address friction points such as slow load times, confusing navigation, or unexpected costs at checkout.
+2. **Reduce exit and bounce rates** — ExitRate and BounceRate are the top features in LightGBM. Audit pages with the highest exit rates (likely checkout flow or poorly designed product pages) and address friction points such as slow load times, confusing navigation, or unexpected costs at checkout. Sessions with PageValue=0 and high BounceRate convert at under 1% — this "low intent" segment is a clear candidate for landing page improvements or paid traffic exclusion.
 
 3. **Increase product page engagement** — ProductPageTime is a strong positive signal. Enrich product pages with detailed descriptions, customer reviews, comparison tools, and high-quality images to increase dwell time and purchase confidence.
 
-4. **Leverage special day proximity** — Sessions near holidays show distinct purchase patterns. Run targeted promotions and optimize inventory ahead of special days to capitalize on increased purchase intent.
+4. **Investigate special day proximity** — Counterintuitively, sessions closer to special days show *lower* conversion (~6%) compared to non-special-day sessions (~17%). This may reflect browsing/research behavior near holidays rather than purchasing. Promotions should account for this pattern — consider targeting special-day visitors with retargeting campaigns rather than expecting immediate conversion.
 
-5. **Personalize by customer type** — Returning visitors convert differently from new visitors. Offer personalized product recommendations and loyalty incentives for returning visitors, and first-purchase discounts or onboarding guides for new visitors.
+5. **Personalize by customer type** — New visitors convert at ~25% vs returning visitors at ~14%, despite returning visitors spending more time on product pages. This suggests returning visitors may face friction (price comparison, checkout UX, trust). Offer loyalty incentives, saved carts, and price-drop notifications for returning visitors, and maintain the strong first-visit experience for new visitors.
 
 6. **Invest in high-converting traffic channels** — Certain TrafficSource values (e.g., sources 2, 8) are associated with higher conversion. Allocate marketing budget toward these channels and investigate what makes them effective.
 

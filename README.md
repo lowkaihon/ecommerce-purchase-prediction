@@ -110,10 +110,32 @@ The dataset contains 12,330 online shopping sessions with 8 features and a binar
 | Negative values | GeographicRegion, BounceRate, ProductPageTime had negatives | Taken absolute values (magnitude is valid, sign is erroneous) |
 | Duplicates | Duplicate rows present | Dropped |
 
+**Key visualizations from EDA:**
+
+![Correlation heatmap](images/correlation_heatmap.png)
+
+BounceRate and ExitRate are highly correlated (0.91). PageValue shows the strongest correlation with PurchaseCompleted (0.49).
+
+![PageValue KDE — non-zero values only](images/pagevalue_kde.png)
+
+Filtering out the zero-dominated spike (78% of values) reveals both classes have similar right-skewed distributions, but PurchaseCompleted=1 has a flatter, wider spread. This motivates the binary `has_page_value` feature — the zero vs non-zero split drives most of PageValue's predictive signal.
+
+![Purchase rate by CustomerType](images/purchase_rate_customertype.png)
+
+New visitors convert at ~25% vs returning visitors at ~14%, despite returning visitors dominating the dataset. This informs the personalization recommendation in the actionable insights.
+
 **Feature engineering choices driven by EDA:**
 
 - **`PageValue_log`** and **`ProductPageTime_log`**: Both features are heavily right-skewed. Log transformation (log1p) reduces skew and improves model performance.
 - **`has_page_value`**: Binary indicator for whether PageValue > 0. PageValue is zero for ~72% of sessions; this feature captures the strong signal that any non-zero PageValue is associated with higher purchase probability.
+
+**Assumptions:**
+
+- **Negative values are sign errors, not separate categories.** GeographicRegion, BounceRate, and ProductPageTime had small numbers of negative entries. The magnitudes are plausible (e.g., bounce rates of 0.1–0.2, page times of 22–52s, region codes 1–9), so we assume only the sign was corrupted during data collection or ETL. The alternative — treating negatives as missing and imputing to 0 — would discard real information.
+- **Missing values are MCAR (Missing Completely At Random).** Null entries (~5% of rows) showed no strong pattern across features, supporting the assumption that missingness is random. This justified using `dropna` over imputation, which also outperformed imputation empirically (LR F1: 0.679 vs 0.655 with median imputation).
+- **Invalid CustomerType entries represent missing data.** Empty strings, `"nan"`, and `"None"` were consolidated into `"Unknown"` rather than dropped, since the absence of customer type information may itself be predictive.
+- **Log transforms are appropriate for right-skewed features.** PageValue and ProductPageTime are heavily right-skewed with long tails. `log1p` reduces skew and compresses the range, which benefits linear models (LR) and can improve split quality for tree-based models.
+- **TrafficSource and GeographicRegion are categorical despite being numeric.** These are coded identifiers (1–20 and 1–9 respectively), not continuous measurements. Treating them as numeric would imply an ordinal relationship (e.g., region 9 > region 1) that has no semantic basis.
 
 ## Feature Processing
 
@@ -175,11 +197,13 @@ The pipeline prints a comparison table sorted by F1, along with per-model classi
 
 | Model | Accuracy | Precision | Recall | F1 | AUC-ROC | CV F1 |
 |-------|----------|-----------|--------|-----|---------|-------|
-| **LightGBM** | 0.8687 | 0.5652 | 0.8289 | **0.6721** | **0.9130** | 0.6677 |
-| Random Forest | 0.8834 | 0.6207 | 0.7248 | 0.6687 | 0.9003 | 0.6730 |
+| **Random Forest** | 0.8818 | 0.6092 | 0.7584 | **0.6756** | 0.9048 | 0.6740 |
+| LightGBM | 0.8687 | 0.5652 | 0.8289 | 0.6721 | **0.9130** | 0.6677 |
 | Logistic Regression | 0.8742 | 0.5857 | 0.7685 | 0.6647 | 0.8706 | 0.6714 |
 
-LightGBM achieves the highest F1 (0.6721) and AUC-ROC (0.9130), indicating the best discriminative ability across all thresholds. Random Forest has the highest precision (0.6207), while LightGBM leads in recall (0.8289). All three models show minimal CV-to-test gap, suggesting no overfitting.
+Random Forest achieves the highest F1 (0.6756) with the best precision-recall balance. LightGBM has the highest AUC-ROC (0.9130), indicating strong discriminative ability across all thresholds. All three models show minimal CV-to-test gap, suggesting no overfitting.
+
+*Note: Results may vary slightly across runs due to non-deterministic parallel execution (`n_jobs=-1`). The values above are representative of typical pipeline output.*
 
 ### Key Factors Influencing Purchase Decisions
 
@@ -187,11 +211,11 @@ Feature importance was extracted from the best-performing models to identify the
 
 | Rank | Feature | LightGBM Importance | RF Importance | Interpretation |
 |------|---------|---------------------|---------------|----------------|
-| 1 | **PageValue / has_page_value** | 104 (PageValue) | 0.21 (PageValue_log), 0.15 (has_page_value) | Strongest predictor. Sessions where users interact with product pricing or add items to cart are far more likely to convert. |
-| 2 | **ExitRate** | 112 | 0.092 | High exit rates indicate users leaving the site — a strong negative signal for conversion. |
-| 3 | **ProductPageTime** | 78 (log: 72) | 0.089 (log: 0.091) | Longer engagement with product pages correlates with purchase intent. |
+| 1 | **PageValue / has_page_value** | 104 (PageValue) | 0.23 (PageValue_log), 0.15 (has_page_value) | Strongest predictor. Sessions where users interact with product pricing or add items to cart are far more likely to convert. |
+| 2 | **ExitRate** | 112 | 0.088 | High exit rates indicate users leaving the site — a strong negative signal for conversion. |
+| 3 | **ProductPageTime** | 78 (log: 72) | 0.091 (log: 0.085) | Longer engagement with product pages correlates with purchase intent. |
 | 4 | **BounceRate** | 75 | 0.057 | Single-page sessions without interaction rarely lead to purchases. |
-| 5 | **SpecialDayProximity** | 53 | 0.010 | Proximity to special days (e.g., holidays) influences purchasing behavior. |
+| 5 | **SpecialDayProximity** | 53 | 0.011 | Proximity to special days (e.g., holidays) influences purchasing behavior. |
 | 6 | **CustomerType** | 25 (Returning) | 0.010 (Returning) | Returning visitors have different conversion patterns than new visitors. |
 | 7 | **TrafficSource** | 33 (Source 2) | 0.014 (Source 2) | Certain traffic channels drive higher-intent visitors. |
 

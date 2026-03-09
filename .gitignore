@@ -1,0 +1,10 @@
+.venv
+uv.lock
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+
+# Intermediate and output data files
+data/online_shopping_raw.csv
+data/online_shopping_cleaned.csv
+data/online_shopping_fillna.csv

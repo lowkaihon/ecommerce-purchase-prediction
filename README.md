@@ -88,7 +88,7 @@ To add or remove a model, edit the `MODELS` dictionary. Each entry specifies:
 **Step details:**
 
 1. **Data ingestion** — `data_loader.py` reads the SQLite database into a pandas DataFrame.
-2. **Cleaning** — `preprocessing.clean_data()` fixes data quality issues identified during EDA (see section e).
+2. **Cleaning** — `preprocessing.clean_data()` fixes data quality issues identified during EDA (see "Key EDA Findings" section).
 3. **Feature engineering** — `preprocessing.feature_engineer()` creates log-transformed features and a binary indicator for PageValue.
 4. **Encoding and splitting** — `preprocessing.prepare_data()` converts categorical columns to one-hot encoded features, separates features/target, and performs stratified train/test split.
 5. **Model training** — `model.py` constructs a sklearn `Pipeline` with a `ColumnTransformer` (StandardScaler on numeric features, passthrough for the rest) and the model. Hyperparameters are tuned using cross-validated search.
@@ -142,7 +142,7 @@ New visitors convert at ~25% vs returning visitors at ~14%, despite returning vi
 | Feature | Type | Processing |
 |---------|------|------------|
 | `CustomerType` | Categorical | Fix typo, map invalid to "Unknown", one-hot encode |
-| `SpecialDayProximity` | Numeric | Passthrough (no issues found) |
+| `SpecialDayProximity` | Numeric | Passthrough (ordinal, already on [0, 1] scale) |
 | `ExitRate` | Numeric | Standard scaling |
 | `PageValue` | Numeric | Standard scaling |
 | `TrafficSource` | Categorical (numeric codes) | Convert to string, one-hot encode |
@@ -203,8 +203,6 @@ The pipeline prints a comparison table sorted by F1, along with per-model classi
 
 Random Forest achieves the highest F1 (0.6756) with the best precision-recall balance. LightGBM has the highest AUC-ROC (0.9130), indicating strong discriminative ability across all thresholds. All three models show minimal CV-to-test gap, suggesting no overfitting.
 
-*Note: Results may vary slightly across runs due to non-deterministic parallel execution (`n_jobs=-1`). The values above are representative of typical pipeline output.*
-
 ### Key Factors Influencing Purchase Decisions
 
 Feature importance was extracted from the best-performing models to identify the key drivers of purchase completion. The top factors are consistent across LightGBM (split-based importance) and Random Forest (Gini importance):
@@ -235,7 +233,35 @@ Feature importance was extracted from the best-performing models to identify the
 
 6. **Invest in high-converting traffic channels** — Certain TrafficSource values (e.g., sources 2, 8) are associated with higher conversion. Allocate marketing budget toward these channels and investigate what makes them effective.
 
+## Limitations
+
+### Missing-data methodology
+
+The decision to dropna rests on a comparison with three known weaknesses:
+
+- **Limited imputation coverage.** Only median/mode imputation was tested — the weakest family of imputers. More sophisticated methods (`KNNImputer`, `IterativeImputer`/MICE, missForest) preserve inter-feature relationships and often outperform simple imputation. The conclusion is more precisely *"dropna beats simple imputation"*, not *"dropna beats all imputation"*.
+- **Leakage in the imputation prototype.** The imputed dataset (`online_shopping_fillna.csv`) was created in the EDA notebook on the full data before the train/test split, so test-set distribution leaked into the training imputed values. This typically inflates impute's F1 — dropna still beat it, so the conclusion is robust, but a clean redo would fit the imputer inside the sklearn pipeline on train folds only.
+- **Single-split comparison.** The dropna-vs-impute comparison used one stratified split, not paired CV folds, so the ~0.024 F1 gap has no uncertainty estimate. Cross-model consistency (the gap held for LR, LightGBM, and RF) provides weak replication, but paired CV would be more rigorous.
+
+### Feature integrity
+
+- **PageValue — computation provenance needs verification.** The feature is described as *"average value of the pages visited before completing a transaction"*, and ~78% of sessions have PageValue=0 against a ~84% non-purchase rate. The ~6% gap suggests PageValue measures something broader than the target (e.g., Google Analytics goal values, which can be non-zero without a completed purchase), so it is more likely a strong engagement signal than direct target leakage. That said, its 0.49 correlation with the target and conditional definition warrant verification before production: is PageValue computed using strictly historical page-level data, or does it incorporate session-level outcomes? A safer deployment would compute it in real-time from page-level historical aggregates.
+
+### Validation strategy
+
+- **No temporal split.** User behavior is likely seasonal. A random stratified split doesn't test whether the model generalizes to future sessions. A time-based split would better reflect deployment conditions if session timestamps are available.
+
+### Interpretability
+
+- **Logistic Regression feature importance is degenerate.** The best LR hyperparameters (`C=0.001`, `l1_ratio=1`) apply pure L1 regularization, which drives most coefficients to zero. Only LightGBM and Random Forest importances are reported; a model-agnostic method (SHAP) would give a cleaner, cross-model view.
+
+### Reproducibility
+
+- **`n_jobs=-1` non-determinism.** Parallel CV introduces floating-point non-determinism in hyperparameter search, so exact metric values vary slightly across runs despite fixed random seeds. Reported numbers are representative, not bitwise-reproducible.
+
 ## Deployment Considerations
+
+The primary deliverable of this project is analytical — the actionable insights in the above section are what the business consumes, not real-time predictions, and those recommendations can be acted on without operationalizing the model. This section outlines what would be needed *if* the model were to be deployed for live scoring (e.g., triggering personalized interventions mid-session, or batch-segmenting users nightly for marketing campaigns).
 
 This pipeline covers the **Experimentation** phase of an end-to-end MLOps architecture: data extraction, data preparation, model training, and model evaluation. Moving to production would involve the additional stages outlined below.
 
